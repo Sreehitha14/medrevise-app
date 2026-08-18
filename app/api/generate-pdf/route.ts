@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getNotebook, appendPage, createNotebook } from "@/lib/store";
+import { getNotebook, appendPage, createNotebook, getPdfBytes } from "@/lib/store";
 import { renderAndAppendPage } from "@/lib/pdfEngine";
 
 export async function POST(req: NextRequest) {
@@ -10,18 +10,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing draft content" }, { status: 400 });
     }
 
-    // Route to an existing notebook, or create one on the fly if the user
-    // typed a new name via the "Create New PDF" flow.
-    let notebook = notebookId ? getNotebook(notebookId) : undefined;
+    // Await the database calls
+    let notebook = notebookId ? await getNotebook(notebookId) : undefined;
     if (!notebook) {
       if (!newNotebookName) {
         return NextResponse.json({ error: "notebookId or newNotebookName required" }, { status: 400 });
       }
-      notebook = createNotebook(newNotebookName);
+      notebook = await createNotebook(newNotebookName);
     }
 
-    const mergedPdf = await renderAndAppendPage(notebook.pdfBytes, draft);
-    const updated = appendPage(notebook.id, mergedPdf, draft.heading);
+    // 1. Download the old PDF from Vercel Blob
+    const existingPdfBytes = await getPdfBytes(notebook.pdfUrl);
+
+    // 2. Add the new page
+    const mergedPdf = await renderAndAppendPage(existingPdfBytes, draft);
+    
+    // 3. Upload the newly merged PDF back to Vercel Blob
+    const updated = await appendPage(notebook.id, mergedPdf, draft.heading);
 
     return NextResponse.json({
       notebookId: updated.id,
@@ -35,16 +40,14 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  // Streams the current merged PDF for download: /api/generate-pdf?id=<notebookId>
   const id = req.nextUrl.searchParams.get("id");
-  const notebook = id ? getNotebook(id) : undefined;
-  if (!notebook || !notebook.pdfBytes) {
+  const notebook = id ? await getNotebook(id) : undefined;
+  
+  if (!notebook || !notebook.pdfUrl) {
     return NextResponse.json({ error: "Notebook not found or empty" }, { status: 404 });
   }
-  return new NextResponse(Buffer.from(notebook.pdfBytes), {
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${notebook.name}.pdf"`,
-    },
-  });
+  
+  // Because the PDF is hosted publicly on Vercel Blob, we can just redirect 
+  // the user straight to the file! This makes viewing/downloading instant.
+  return NextResponse.redirect(notebook.pdfUrl);
 }
