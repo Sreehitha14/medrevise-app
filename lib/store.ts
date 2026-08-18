@@ -1,4 +1,4 @@
-import { put, list } from "@vercel/blob";
+import { put, list, del } from "@vercel/blob";
 
 export interface Notebook {
   id: string;
@@ -62,7 +62,6 @@ export async function appendPage(id: string, newPdfBytes: Uint8Array, heading: s
   const nb = notebooks[nbIndex];
   
   const filename = `notebooks/${id}.pdf`;
-  // Fixed: Converted Uint8Array to a Node Buffer for Vercel Blob
   const blob = await put(filename, Buffer.from(newPdfBytes), {
     access: 'public',
     addRandomSuffix: false,
@@ -85,4 +84,25 @@ export async function getPdfBytes(url: string | null): Promise<Uint8Array | null
   if (!res.ok) return null;
   const arrayBuffer = await res.arrayBuffer();
   return new Uint8Array(arrayBuffer);
+}
+
+// NEW: Delete function that removes the record and the actual file
+export async function deleteNotebook(id: string): Promise<void> {
+  const notebooks = await getIndex();
+  const nbIndex = notebooks.findIndex((n) => n.id === id);
+  
+  if (nbIndex === -1) return; 
+  
+  const nb = notebooks[nbIndex];
+  
+  if (nb.pdfUrl) {
+    try {
+      await del(nb.pdfUrl);
+    } catch (e) {
+      console.error("Failed to delete PDF from Blob:", e);
+    }
+  }
+  
+  notebooks.splice(nbIndex, 1);
+  await saveIndex(notebooks);
 }
