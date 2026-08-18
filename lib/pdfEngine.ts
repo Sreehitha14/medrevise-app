@@ -39,8 +39,7 @@ const RULE_COLOR = rgb(0.83, 0.87, 0.9);
 const TITLE_BORDER = rgb(0.29, 0.45, 0.78); // dashed blue box
 const TITLE_BG = rgb(0.93, 0.96, 0.99);
 
-// Section-heading + callout accents cycle through these (matches the
-// sample's green/blue/red section dividers) rather than one fixed color.
+// Section-heading + callout accents cycle through these
 const SECTION_ACCENTS = [rgb(0.16, 0.45, 0.32), rgb(0.2, 0.35, 0.62), rgb(0.55, 0.25, 0.5)];
 const CALLOUT_BORDER = rgb(0.82, 0.29, 0.25);
 const CALLOUT_BG = rgb(0.99, 0.93, 0.92);
@@ -54,11 +53,29 @@ const HIGHLIGHT_HEX: Record<Highlight["color"], { r: number; g: number; b: numbe
 };
 
 /**
- * Renders one extracted draft as a single compact exam-notes page — dashed
- * title box, colored section headers, inline multi-color highlights, and an
- * optional callout box — and appends it to the notebook's existing PDF
- * bytes (if any). Never mutates or drops prior pages — this is pure append.
+ * Safely converts un-draw-able symbols into standard text.
+ * Prevents the dreaded WinAnsi encoding crash!
  */
+export function sanitizeForPdf(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/α/g, "alpha")
+    .replace(/β/g, "beta")
+    .replace(/γ/g, "gamma")
+    .replace(/δ/g, "delta")
+    .replace(/θ/g, "theta")
+    .replace(/μ/g, "micro")
+    .replace(/π/g, "pi")
+    .replace(/σ/g, "sigma")
+    .replace(/→/g, "->")
+    .replace(/←/g, "<-")
+    .replace(/↑/g, "(up)")
+    .replace(/↓/g, "(down)")
+    .replace(/≥/g, ">=")
+    .replace(/≤/g, "<=")
+    .replace(/±/g, "+/-");
+}
+
 export async function renderAndAppendPage(
   existingPdfBytes: Uint8Array | null,
   draft: ExtractedDraft
@@ -83,8 +100,11 @@ export async function renderAndAppendPage(
     if (cursorY - needed < 44) newPage();
   };
 
-  // --- Title box (dashed border, centered heading + subtitle) ---
-  const titleBoxH = draft.subtitle ? 46 : 34;
+  // --- Title box ---
+  const safeHeading = sanitizeForPdf(draft.heading);
+  const safeSubtitle = draft.subtitle ? sanitizeForPdf(draft.subtitle) : undefined;
+
+  const titleBoxH = safeSubtitle ? 46 : 34;
   page.drawRectangle({
     x: MARGIN_L,
     y: cursorY - titleBoxH,
@@ -95,18 +115,20 @@ export async function renderAndAppendPage(
     borderWidth: 1,
     borderDashArray: [4, 3],
   });
-  const titleSize = fitFontSize(draft.heading, bold, 17, CONTENT_W - 24);
-  centerText(page, draft.heading, bold, titleSize, cursorY - titleBoxH / 2 + (draft.subtitle ? 8 : -titleSize / 3), TITLE_BORDER);
-  if (draft.subtitle) {
-    centerText(page, draft.subtitle, reg, 9, cursorY - titleBoxH + 12, rgb(0.4, 0.46, 0.55));
+  const titleSize = fitFontSize(safeHeading, bold, 17, CONTENT_W - 24);
+  centerText(page, safeHeading, bold, titleSize, cursorY - titleBoxH / 2 + (safeSubtitle ? 8 : -titleSize / 3), TITLE_BORDER);
+  if (safeSubtitle) {
+    centerText(page, safeSubtitle, reg, 9, cursorY - titleBoxH + 12, rgb(0.4, 0.46, 0.55));
   }
   cursorY -= titleBoxH + 16;
 
   // --- Sections ---
   draft.sections.forEach((section, sIdx) => {
     const accent = SECTION_ACCENTS[sIdx % SECTION_ACCENTS.length];
+    const safeTitle = sanitizeForPdf(section.title);
+    
     ensureRoom(30);
-    page.drawText(section.title, { x: MARGIN_L, y: cursorY, size: 12, font: bold, color: accent });
+    page.drawText(safeTitle, { x: MARGIN_L, y: cursorY, size: 12, font: bold, color: accent });
     cursorY -= 5;
     page.drawLine({
       start: { x: MARGIN_L, y: cursorY },
@@ -118,7 +140,15 @@ export async function renderAndAppendPage(
     cursorY -= 14;
 
     for (const bullet of section.bullets) {
-      const lines = wrapWithHighlights(`•  ${bullet.text}`, reg, BODY_SIZE, CONTENT_W - 10, bullet.highlights);
+      const safeBulletText = sanitizeForPdf(bullet.text);
+      
+      // Sanitize the highlights so the string matching index still works perfectly!
+      const safeHighlights = bullet.highlights?.map(h => ({
+        text: sanitizeForPdf(h.text),
+        color: h.color
+      }));
+
+      const lines = wrapWithHighlights(`•  ${safeBulletText}`, reg, BODY_SIZE, CONTENT_W - 10, safeHighlights);
       for (const lineSpans of lines) {
         ensureRoom(LINE_HEIGHT);
         drawSpans(page, lineSpans, reg, BODY_SIZE, MARGIN_L + 4, cursorY);
@@ -141,7 +171,10 @@ export async function renderAndAppendPage(
 
   // --- Callout box ---
   if (draft.callout) {
-    const calloutLines = wrapText(draft.callout.text, reg, 9.5, CONTENT_W - 24);
+    const safeCalloutText = sanitizeForPdf(draft.callout.text);
+    const safeCalloutLabel = sanitizeForPdf(draft.callout.label);
+
+    const calloutLines = wrapText(safeCalloutText, reg, 9.5, CONTENT_W - 24);
     const calloutH = 22 + calloutLines.length * 13;
     ensureRoom(calloutH + 10);
     page.drawRectangle({
@@ -153,7 +186,7 @@ export async function renderAndAppendPage(
       borderColor: CALLOUT_BORDER,
       borderWidth: 1,
     });
-    page.drawText(draft.callout.label, {
+    page.drawText(safeCalloutLabel, {
       x: MARGIN_L + 10,
       y: cursorY - 15,
       size: 9.5,
@@ -181,7 +214,6 @@ async function loadHandwritingFonts(doc: PDFDocument) {
     const bold = await doc.embedFont(boldBytes);
     return [regular, bold] as const;
   } catch {
-    // Fonts not present yet (see README) — fall back so the app still runs.
     const regular = await doc.embedFont(StandardFonts.Helvetica);
     const bold = await doc.embedFont(StandardFonts.HelveticaBold);
     return [regular, bold] as const;
@@ -220,15 +252,11 @@ function fitFontSize(text: string, font: import("pdf-lib").PDFFont, maxSize: num
   return size;
 }
 
-/** One rendered word/segment with an optional highlight color. */
 interface Span {
   text: string;
   color?: Highlight["color"];
 }
 
-/** Wraps `text` to maxWidth, tagging characters that fall inside any of the
- *  bullet's highlighted substrings so each wrapped line can be drawn with
- *  the right background color per word. */
 function wrapWithHighlights(
   text: string,
   font: import("pdf-lib").PDFFont,
