@@ -24,11 +24,21 @@ export async function POST(req: NextRequest) {
 
     let userText = "";
     
-    // Check if user is refining an old draft, OR giving an initial instruction
     if (refinementInstruction && priorDraft) {
       userText = buildRefinementPrompt(refinementInstruction, priorDraft);
     } else if (refinementInstruction) {
-      userText = `Analyze the provided images. Pay special attention to this instruction from the user: "${refinementInstruction}". \n\n1. First, extract the exact Header or Question being asked. 2. Second, provide a clear, concise answer or summary of the notes beneath it. Return your results strictly in the requested JSON structure.`;
+      // THIS IS THE UPDATED SECTION: Forcing Gemini to obey your commands
+      userText = `Analyze the provided images. 
+
+CRITICAL USER COMMAND: "${refinementInstruction}"
+
+You MUST obey the command above absolutely. 
+- If the user tells you to use a specific Question Name or Header, you must use their exact requested name instead of what is written in the image.
+- If the user tells you to delete, skip, or ignore certain sections, you must leave them out of your summary.
+
+1. Extract the Header/Question (or use the user's custom name).
+2. Extract the summary of the notes.
+Return your results strictly in the requested JSON structure.`;
     } else {
       userText = "Analyze the provided images of textbook/study materials. 1. First, extract the exact Header or Question being asked. 2. Second, provide a clear, concise answer or summary of the notes beneath it. Return your results strictly in the requested JSON structure.";
     }
