@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listNotebooks, createNotebook } from "@/lib/store";
+import { listNotebooks, createNotebook, deleteNotebook } from "@/lib/store";
 
 export async function GET() {
-  // Await the cloud fetch
   const notebooksList = await listNotebooks();
   
   const notebooks = notebooksList.map((nb) => ({
@@ -22,7 +21,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Notebook name required" }, { status: 400 });
   }
   
-  // Await the cloud creation
   const nb = await createNotebook(name.trim());
   return NextResponse.json({ id: nb.id, name: nb.name, pageCount: 0 });
+}
+
+// NEW: DELETE route
+export async function DELETE(req: NextRequest) {
+  const id = req.nextUrl.searchParams.get("id");
+  
+  if (!id) {
+    return NextResponse.json({ error: "Notebook ID required" }, { status: 400 });
+  }
+  
+  await deleteNotebook(id);
+  return NextResponse.json({ success: true });
 }
