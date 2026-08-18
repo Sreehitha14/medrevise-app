@@ -1,0 +1,6 @@
+Download and place here (see README setup section):
+- PatrickHand-Regular.ttf  (Google Fonts: "Patrick Hand")
+- Caveat-Bold.ttf          (Google Fonts: "Caveat", Bold weight)
+
+The app falls back to Helvetica in generated PDFs until these are present,
+so it still runs without them — but won't look "handwritten" until added.

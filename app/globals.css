@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Patrick Hand";
+  src: url("/fonts/PatrickHand-Regular.ttf") format("truetype");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Caveat";
+  src: url("/fonts/Caveat-Bold.ttf") format("truetype");
+  font-weight: 700;
+}
+
+body {
+  @apply bg-ink-950 text-ink-300 font-body;
+}
+
+/* Ruled "notebook page" surface used for extraction preview cards and the
+   PDF Manager thumbnails, so the in-app preview matches the rendered PDF. */
+.notebook-page {
+  background-color: #faf6ea;
+  background-image:
+    linear-gradient(#c9d6e0 1px, transparent 1px);
+  background-size: 100% 28px;
+  background-position: 0 6px;
+  position: relative;
+  border-radius: 2px;
+}
+.notebook-page::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 44px;
+  width: 1px;
+  background: #e3796b;
+  opacity: 0.55;
+}
+
+.highlight-mark {
+  background: linear-gradient(180deg, transparent 55%, #ffe066 55%);
+  padding: 0 1px;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #28323f;
+  border-radius: 4px;
+}
+
+/* iOS Safari zooms the page in when a focused input's font-size is under
+   16px. The notebook-name input and any future text fields use text-sm
+   (14px) for visual consistency, so bump the effective size back up only
+   on small screens where that zoom behavior kicks in. */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
