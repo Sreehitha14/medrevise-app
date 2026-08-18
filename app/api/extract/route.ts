@@ -3,43 +3,44 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { EXTRACTION_SYSTEM_PROMPT, buildRefinementPrompt } from "@/lib/prompts";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
-
-// gemini-2.0-flash is on Google's free tier (rate-limited, no billing
-// required) and supports vision + long system instructions. If this model
-// name is ever retired, check https://ai.google.dev/gemini-api/docs/models
-// for the current free-tier vision model and swap it in here.
 const MODEL_NAME = "gemini-2.0-flash";
 
 export async function POST(req: NextRequest) {
   try {
-    const form = await req.formData();
-    const file = form.get("image") as File | null;
-    const refinementInstruction = form.get("refinementInstruction") as string | null;
-    const priorDraft = form.get("priorDraft") as string | null;
+    // Read JSON payload instead of FormData
+    const body = await req.json();
+    const images = body.images as string[];
+    const refinementInstruction = body.refinementInstruction as string | null;
+    const priorDraft = body.priorDraft as any | null;
 
-    if (!file) {
-      return NextResponse.json({ error: "No image uploaded" }, { status: 400 });
+    if (!images || images.length === 0) {
+      return NextResponse.json({ error: "No images uploaded" }, { status: 400 });
     }
 
-    const arrayBuffer = await file.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const mimeType = file.type || "image/jpeg";
+    // Convert base64 data URIs back to Gemini's expected inlineData format for multiple images
+    const imageParts = images.map((dataUrl) => {
+      const [prefix, base64] = dataUrl.split(",");
+      const mimeType = prefix.match(/:(.*?);/)?.[1] || "image/jpeg";
+      return { inlineData: { mimeType, data: base64 } };
+    });
 
+    // Appended custom instruction to specifically target Header and Answer
     const userText =
       refinementInstruction && priorDraft
         ? buildRefinementPrompt(refinementInstruction, priorDraft)
-        : "Extract this page according to your instructions and return the JSON.";
+        : "Analyze the provided images of textbook/study materials. 1. First, extract the exact Header or Question being asked. 2. Second, provide a clear, concise answer or summary of the notes beneath it. Return your results strictly in the requested JSON structure.";
 
     const model = genAI.getGenerativeModel({
       model: MODEL_NAME,
       systemInstruction: EXTRACTION_SYSTEM_PROMPT,
       generationConfig: {
-        responseMimeType: "application/json", // asks Gemini to return raw JSON, no markdown fences
+        responseMimeType: "application/json",
       },
     });
 
+    // Pass all images and the user prompt
     const result = await model.generateContent([
-      { inlineData: { mimeType, data: base64 } },
+      ...imageParts,
       { text: userText },
     ]);
 
