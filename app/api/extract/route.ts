@@ -3,7 +3,6 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { EXTRACTION_SYSTEM_PROMPT, buildRefinementPrompt } from "@/lib/prompts";
 
 export const maxDuration = 60;
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
 const MODEL_NAME = "gemini-3.6-flash";
 
 export async function POST(req: NextRequest) {
@@ -28,7 +27,6 @@ export async function POST(req: NextRequest) {
     if (refinementInstruction && priorDraft) {
       userText = buildRefinementPrompt(refinementInstruction, priorDraft);
     } else if (refinementInstruction) {
-      // THIS IS THE UPDATED SECTION: Forcing Gemini to obey your commands
       userText = `Analyze the provided images. 
 
 CRITICAL USER COMMAND: "${refinementInstruction}"
@@ -44,18 +42,60 @@ Return your results strictly in the requested JSON structure.`;
       userText = "Analyze the provided images of textbook/study materials. 1. First, extract the exact Header or Question being asked. 2. Second, provide a clear, concise answer or summary of the notes beneath it. Return your results strictly in the requested JSON structure.";
     }
 
-    const model = genAI.getGenerativeModel({
-      model: MODEL_NAME,
-      systemInstruction: EXTRACTION_SYSTEM_PROMPT,
-      generationConfig: {
-        responseMimeType: "application/json",
-      },
-    });
+    // --- SMART KEY ROTATOR WITH RETRY LOGIC ---
+    const keysString = process.env.GEMINI_API_KEY || "";
+    const apiKeys = keysString.split(",").map(key => key.trim()).filter(key => key.length > 0);
 
-    const result = await model.generateContent([
-      ...imageParts,
-      { text: userText },
-    ]);
+    if (apiKeys.length === 0) {
+      return NextResponse.json({ error: "No API keys configured" }, { status: 500 });
+    }
+
+    // Shuffle the keys so we distribute the load evenly across all available accounts
+    const shuffledKeys = apiKeys.sort(() => Math.random() - 0.5);
+    
+    let result = null;
+    let lastError = null;
+
+    for (const key of shuffledKeys) {
+      try {
+        const genAI = new GoogleGenerativeAI(key);
+        const model = genAI.getGenerativeModel({
+          model: MODEL_NAME,
+          systemInstruction: EXTRACTION_SYSTEM_PROMPT,
+          generationConfig: {
+            responseMimeType: "application/json",
+          },
+        });
+
+        // Try to generate content with the current key
+        result = await model.generateContent([
+          ...imageParts,
+          { text: userText },
+        ]);
+        
+        // If it succeeds, break out of the loop!
+        break; 
+        
+      } catch (err: any) {
+        lastError = err;
+        const errorMessage = err.toString().toLowerCase();
+        
+        // If the error is a 429 Quota Exceeded or 503 Server Busy, log it and let the loop try the next key
+        if (errorMessage.includes("429") || errorMessage.includes("quota") || errorMessage.includes("too many requests") || errorMessage.includes("503")) {
+          console.warn("Key rate limited or server busy. Rotating to next available key...");
+          continue; 
+        } else {
+          // If it's a different error (like a bad prompt), throw it immediately so we don't waste other keys
+          throw err; 
+        }
+      }
+    }
+
+    // If the loop finishes and result is still null, ALL keys failed
+    if (!result) {
+      throw lastError || new Error("All API keys exceeded their quota.");
+    }
+    // ------------------------------------------
 
     const raw = result.response.text();
 
