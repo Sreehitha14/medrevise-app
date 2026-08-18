@@ -47,7 +47,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Notebook not found or empty" }, { status: 404 });
   }
   
-  // Because the PDF is hosted publicly on Vercel Blob, we can just redirect 
-  // the user straight to the file! This makes viewing/downloading instant.
-  return NextResponse.redirect(notebook.pdfUrl);
+  // 1. Fetch the raw PDF file from Vercel Blob
+  const res = await fetch(notebook.pdfUrl);
+  const pdfBuffer = await res.arrayBuffer();
+
+  // 2. Clean the filename to remove any weird characters
+  const cleanName = notebook.name.replace(/[^a-zA-Z0-9-_\s]/g, "");
+
+  // 3. Serve it to the browser with the proper notebook name!
+  return new NextResponse(pdfBuffer, {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `inline; filename="${cleanName}.pdf"`,
+    },
+  });
 }
