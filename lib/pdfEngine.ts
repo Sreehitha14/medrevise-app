@@ -154,17 +154,6 @@ export async function renderAndAppendPage(
         drawSpans(page, lineSpans, reg, BODY_SIZE, MARGIN_L + 4, cursorY);
         cursorY -= LINE_HEIGHT;
       }
-      if (bullet.wasFragment) {
-        ensureRoom(LINE_HEIGHT);
-        page.drawText("(extended from highlighted fragment)", {
-          x: MARGIN_L + 14,
-          y: cursorY,
-          size: 7.5,
-          font: reg,
-          color: rgb(0.55, 0.4, 0.25),
-        });
-        cursorY -= LINE_HEIGHT - 3;
-      }
     }
     cursorY -= 8;
   });
