@@ -4,18 +4,16 @@ export interface Notebook {
   id: string;
   name: string;
   pageCount: number;
-  pdfUrl: string | null; // Changed from pdfBytes to pdfUrl
+  pdfUrl: string | null;
   lastThumbnailText: string | null;
   updatedAt: string;
 }
 
-// Helper to fetch the permanent index of notebooks from the cloud
 async function getIndex(): Promise<Notebook[]> {
   try {
     const { blobs } = await list({ prefix: 'index.json' });
     if (blobs.length === 0) return [];
     
-    // fetch the json, ensuring Next.js doesn't cache an old version
     const res = await fetch(blobs[0].url, { cache: 'no-store' });
     return await res.json();
   } catch (e) {
@@ -23,11 +21,10 @@ async function getIndex(): Promise<Notebook[]> {
   }
 }
 
-// Helper to save the index back to the cloud
 async function saveIndex(notebooks: Notebook[]) {
   await put('index.json', JSON.stringify(notebooks), {
     access: 'public',
-    addRandomSuffix: false, // Overwrites the existing file
+    addRandomSuffix: false,
   });
 }
 
@@ -64,11 +61,11 @@ export async function appendPage(id: string, newPdfBytes: Uint8Array, heading: s
   
   const nb = notebooks[nbIndex];
   
-  // Upload the actual PDF file to Vercel Blob!
   const filename = `notebooks/${id}.pdf`;
-  const blob = await put(filename, newPdfBytes, {
+  // Fixed: Converted Uint8Array to a Node Buffer for Vercel Blob
+  const blob = await put(filename, Buffer.from(newPdfBytes), {
     access: 'public',
-    addRandomSuffix: false, // Overwrites the old PDF with the newly merged one
+    addRandomSuffix: false,
     contentType: 'application/pdf',
   });
 
@@ -82,7 +79,6 @@ export async function appendPage(id: string, newPdfBytes: Uint8Array, heading: s
   return nb;
 }
 
-// Helper to download the old PDF bytes before merging a new page
 export async function getPdfBytes(url: string | null): Promise<Uint8Array | null> {
   if (!url) return null;
   const res = await fetch(url, { cache: 'no-store' });
