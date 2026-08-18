@@ -10,7 +10,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing draft content" }, { status: 400 });
     }
 
-    // Await the database calls
     let notebook = notebookId ? await getNotebook(notebookId) : undefined;
     if (!notebook) {
       if (!newNotebookName) {
@@ -19,13 +18,9 @@ export async function POST(req: NextRequest) {
       notebook = await createNotebook(newNotebookName);
     }
 
-    // 1. Download the old PDF from Vercel Blob
     const existingPdfBytes = await getPdfBytes(notebook.pdfUrl);
-
-    // 2. Add the new page
     const mergedPdf = await renderAndAppendPage(existingPdfBytes, draft);
     
-    // 3. Upload the newly merged PDF back to Vercel Blob
     const updated = await appendPage(notebook.id, mergedPdf, draft.heading);
 
     return NextResponse.json({
@@ -41,24 +36,25 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
+  // NEW: Detect action type
+  const action = req.nextUrl.searchParams.get("action") || "view"; 
   const notebook = id ? await getNotebook(id) : undefined;
   
   if (!notebook || !notebook.pdfUrl) {
     return NextResponse.json({ error: "Notebook not found or empty" }, { status: 404 });
   }
   
-  // 1. Fetch the raw PDF file from Vercel Blob
   const res = await fetch(notebook.pdfUrl);
   const pdfBuffer = await res.arrayBuffer();
 
-  // 2. Clean the filename to remove any weird characters
   const cleanName = notebook.name.replace(/[^a-zA-Z0-9-_\s]/g, "");
+  // NEW: Switch between attachment (download) and inline (view)
+  const disposition = action === "download" ? "attachment" : "inline";
 
-  // 3. Serve it to the browser with the proper notebook name!
   return new NextResponse(pdfBuffer, {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${cleanName}.pdf"`,
+      "Content-Disposition": `${disposition}; filename="${cleanName}.pdf"`,
     },
   });
 }
