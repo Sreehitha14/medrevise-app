@@ -22,7 +22,7 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
   // Staging Area State
   const [stagedImages, setStagedImages] = useState<File[]>([]);
   const [instruction, setInstruction] = useState("");
-  const [lastUploadedImages, setLastUploadedImages] = useState<File[]>([]); // Keeps images for later refinement
+  const [lastUploadedImages, setLastUploadedImages] = useState<File[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -34,7 +34,6 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
     setMessages((prev) => prev.map((m) => (m.id === id ? ({ ...m, ...patch } as ChatMessage) : m)));
   }
 
-  // 1. Stage the files (Max 10) instead of sending immediately
   function handleFilesSelected(files: File[]) {
     setStagedImages((prev) => {
       const combined = [...prev, ...files];
@@ -46,26 +45,23 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
     });
   }
 
-  // 2. Remove a staged file
   function removeStagedImage(index: number) {
     setStagedImages((prev) => prev.filter((_, i) => i !== index));
   }
 
-  // 3. Submit the staged files and text instruction
   async function handleSubmit() {
     if (stagedImages.length === 0) return;
 
     const filesToProcess = [...stagedImages];
     const currentInstruction = instruction;
 
-    // Clear staging area immediately
     setStagedImages([]);
     setInstruction("");
-    setLastUploadedImages(filesToProcess); // Save in case they ask for refinements later
+    setLastUploadedImages(filesToProcess);
 
-    // Show preview in chat
+    // Fixed: role set to "assistant" to satisfy the ChatMessage type definition
     const url = URL.createObjectURL(filesToProcess[0]);
-    push({ id: nextId(), role: "user", kind: "image_preview", imageUrl: url });
+    push({ id: nextId(), role: "assistant", kind: "image_preview", imageUrl: url });
     
     if (currentInstruction.trim()) {
       push({ id: nextId(), role: "user", kind: "text", text: currentInstruction });
@@ -215,8 +211,6 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
       </div>
 
       <div className="shrink-0 border-t border-ink-800 p-3 bg-ink-900 flex flex-col gap-3">
-        
-        {/* Staged Images Thumbnails */}
         {stagedImages.length > 0 && (
           <div className="flex gap-2 overflow-x-auto pb-1">
             {stagedImages.map((file, i) => (
@@ -233,7 +227,6 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
           </div>
         )}
 
-        {/* Chat Input Bar */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => fileInputRef.current?.click()}
