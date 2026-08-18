@@ -14,12 +14,16 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
       id: nextId(),
       role: "assistant",
       kind: "text",
-      text:
-        "Upload a photo of a textbook page and I'll pull out either the highlighted lines, or the high-yield points if nothing's marked. Nothing outside the page ever makes it into your notes.",
+      text: "Upload up to 10 textbook photos. You can type a specific question name or instruction before hitting send!",
     },
   ]);
-  const [pendingImages, setPendingImages] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
+  
+  // Staging Area State
+  const [stagedImages, setStagedImages] = useState<File[]>([]);
+  const [instruction, setInstruction] = useState("");
+  const [lastUploadedImages, setLastUploadedImages] = useState<File[]>([]); // Keeps images for later refinement
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function push(msg: ChatMessage) {
@@ -30,34 +34,60 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
     setMessages((prev) => prev.map((m) => (m.id === id ? ({ ...m, ...patch } as ChatMessage) : m)));
   }
 
-  async function handleFilesSelected(files: File[]) {
-    setPendingImages(files);
-    // Preview the first image in the chat
-    const url = URL.createObjectURL(files[0]);
-    push({ id: nextId(), role: "assistant", kind: "image_preview", imageUrl: url });
-    await runExtraction(files);
+  // 1. Stage the files (Max 10) instead of sending immediately
+  function handleFilesSelected(files: File[]) {
+    setStagedImages((prev) => {
+      const combined = [...prev, ...files];
+      if (combined.length > 10) {
+        alert("You can only upload a maximum of 10 images at once.");
+        return combined.slice(0, 10);
+      }
+      return combined;
+    });
+  }
+
+  // 2. Remove a staged file
+  function removeStagedImage(index: number) {
+    setStagedImages((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // 3. Submit the staged files and text instruction
+  async function handleSubmit() {
+    if (stagedImages.length === 0) return;
+
+    const filesToProcess = [...stagedImages];
+    const currentInstruction = instruction;
+
+    // Clear staging area immediately
+    setStagedImages([]);
+    setInstruction("");
+    setLastUploadedImages(filesToProcess); // Save in case they ask for refinements later
+
+    // Show preview in chat
+    const url = URL.createObjectURL(filesToProcess[0]);
+    push({ id: nextId(), role: "user", kind: "image_preview", imageUrl: url });
+    
+    if (currentInstruction.trim()) {
+      push({ id: nextId(), role: "user", kind: "text", text: currentInstruction });
+    }
+
+    await runExtraction(filesToProcess, currentInstruction);
   }
 
   async function runExtraction(
     files: File[],
-    refinementInstruction?: string,
+    userInstruction?: string,
     priorDraft?: ExtractedDraft
   ) {
     setBusy(true);
     try {
-      // 1. Compress all files to prevent Vercel 413 Payload error
       const compressedFiles = await Promise.all(
         files.map(async (file) => {
-          const options = {
-            maxSizeMB: 1, // Compress to max 1MB each
-            maxWidthOrHeight: 1920,
-            useWebWorker: true,
-          };
+          const options = { maxSizeMB: 1, maxWidthOrHeight: 1920, useWebWorker: true };
           return await imageCompression(file, options);
         })
       );
 
-      // 2. Convert all compressed files to Base64 strings
       const base64Images = await Promise.all(
         compressedFiles.map((file) => {
           return new Promise<string>((resolve, reject) => {
@@ -69,12 +99,9 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
         })
       );
 
-      // 3. Send as JSON array instead of FormData
       const payload: any = { images: base64Images };
-      if (refinementInstruction && priorDraft) {
-        payload.refinementInstruction = refinementInstruction;
-        payload.priorDraft = priorDraft;
-      }
+      if (userInstruction) payload.refinementInstruction = userInstruction;
+      if (priorDraft) payload.priorDraft = priorDraft;
 
       const res = await fetch("/api/extract", {
         method: "POST",
@@ -83,6 +110,8 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
       });
       
       const data = await res.json();
+
+      if (!res.ok || data.error) throw new Error(data.error || "Server error");
 
       if (data.mode === "unclear") {
         push({ id: nextId(), role: "assistant", kind: "unclear", reason: data.reason ?? "Image unclear." });
@@ -143,7 +172,7 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
         id: nextId(),
         role: "assistant",
         kind: "text",
-        text: `Added to "${data.notebookName}" — now ${data.pageCount} page${data.pageCount === 1 ? "" : "s"}. Upload the next page whenever you're ready.`,
+        text: `Added to "${data.notebookName}" — now ${data.pageCount} page${data.pageCount === 1 ? "" : "s"}.`,
       });
       onPageGenerated();
     } catch {
@@ -156,16 +185,15 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
   }
 
   async function handleRefinement(messageId: string, instruction: string, priorDraft: ExtractedDraft) {
-    if (!pendingImages.length) return;
+    if (!lastUploadedImages.length) return;
     updateMessage(messageId, { resolved: true } as any);
     push({ id: nextId(), role: "user", kind: "text", text: instruction });
-    await runExtraction(pendingImages, instruction, priorDraft);
+    await runExtraction(lastUploadedImages, instruction, priorDraft);
   }
 
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-3">
-        {/* Optional chaining (?) added below to prevent the client crash */}
         {messages?.map((m) => (
           <MessageBubble
             key={m.id}
@@ -186,32 +214,66 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
         )}
       </div>
 
-      <div className="shrink-0 border-t border-ink-800 p-3">
+      <div className="shrink-0 border-t border-ink-800 p-3 bg-ink-900 flex flex-col gap-3">
+        
+        {/* Staged Images Thumbnails */}
+        {stagedImages.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {stagedImages.map((file, i) => (
+              <div key={i} className="relative w-14 h-14 shrink-0 rounded-lg overflow-hidden border border-ink-700">
+                <img src={URL.createObjectURL(file)} className="object-cover w-full h-full opacity-80" alt="preview" />
+                <button
+                  onClick={() => removeStagedImage(i)}
+                  className="absolute top-0 right-0 bg-red-500 hover:bg-red-600 text-white w-5 h-5 flex items-center justify-center rounded-bl-lg text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Chat Input Bar */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={busy}
-            title="Upload textbook page photo(s)"
-            className="w-9 h-9 shrink-0 rounded-full bg-ink-800 hover:bg-ink-700 flex items-center justify-center text-ink-300 disabled:opacity-40 transition"
+            disabled={busy || stagedImages.length >= 10}
+            title="Attach images (Max 10)"
+            className="w-10 h-10 shrink-0 rounded-full bg-ink-800 hover:bg-ink-700 flex items-center justify-center text-ink-300 disabled:opacity-40 transition"
           >
             <PaperclipIcon />
           </button>
+          
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            multiple // This allows selecting multiple photos
-            capture="environment"
+            multiple
             className="hidden"
             onChange={(e) => {
               const files = Array.from(e.target.files || []);
               if (files.length > 0) handleFilesSelected(files);
-              e.target.value = "";
+              e.target.value = ""; 
             }}
           />
-          <div className="flex-1 text-xs text-ink-500 px-3 py-2 rounded-full bg-ink-800/60 border border-ink-800">
-            Attach page photo(s) to get started
-          </div>
+
+          <input
+            type="text"
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            placeholder="Add an instruction or hit send..."
+            disabled={busy}
+            className="flex-1 bg-ink-800 border border-ink-700 rounded-full px-4 py-2.5 text-sm text-ink-100 outline-none transition disabled:opacity-50"
+          />
+
+          <button
+            onClick={handleSubmit}
+            disabled={busy || stagedImages.length === 0}
+            className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white rounded-full px-5 py-2.5 text-sm font-medium transition disabled:opacity-50 disabled:bg-ink-800"
+          >
+            Send
+          </button>
         </div>
       </div>
     </div>
