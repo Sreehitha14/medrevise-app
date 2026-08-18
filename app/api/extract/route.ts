@@ -80,9 +80,17 @@ Return your results strictly in the requested JSON structure.`;
         lastError = err;
         const errorMessage = err.toString().toLowerCase();
         
-        // If the error is a 429 Quota Exceeded or 503 Server Busy, log it and let the loop try the next key
-        if (errorMessage.includes("429") || errorMessage.includes("quota") || errorMessage.includes("too many requests") || errorMessage.includes("503")) {
-          console.warn("Key rate limited or server busy. Rotating to next available key...");
+        // NEW: Now it catches 429 Quota, 503 Busy, AND 401 Unauthorized/Bad Keys!
+        if (
+          errorMessage.includes("429") || 
+          errorMessage.includes("quota") || 
+          errorMessage.includes("too many requests") || 
+          errorMessage.includes("503") ||
+          errorMessage.includes("401") ||
+          errorMessage.includes("unauthorized") ||
+          errorMessage.includes("invalid authentication")
+        ) {
+          console.warn("Key rate limited, server busy, or key expired. Rotating to next available key...");
           continue; 
         } else {
           // If it's a different error (like a bad prompt), throw it immediately so we don't waste other keys
@@ -93,7 +101,7 @@ Return your results strictly in the requested JSON structure.`;
 
     // If the loop finishes and result is still null, ALL keys failed
     if (!result) {
-      throw lastError || new Error("All API keys exceeded their quota.");
+      throw lastError || new Error("All API keys failed or exceeded their quota.");
     }
     // ------------------------------------------
 
