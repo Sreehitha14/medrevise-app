@@ -50,22 +50,31 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
   }
 
   async function handleSubmit() {
-    if (stagedImages.length === 0) return;
+    // 1. If nothing is staged and no text is typed, do nothing
+    if (stagedImages.length === 0 && !instruction.trim()) return;
 
-    const filesToProcess = [...stagedImages];
+    // 2. If no new images are attached, use the previously uploaded ones
+    const filesToProcess = stagedImages.length > 0 ? [...stagedImages] : [...lastUploadedImages];
     const currentInstruction = instruction;
+
+    if (filesToProcess.length === 0) {
+      alert("Please attach at least one photo first!");
+      return;
+    }
 
     setStagedImages([]);
     setInstruction("");
-    setLastUploadedImages(filesToProcess);
-
-    // Fixed: role set to "assistant" to satisfy the ChatMessage type definition
-   // Show a preview bubble for EVERY image
-    filesToProcess.forEach((file) => {
-      const url = URL.createObjectURL(file);
-      push({ id: nextId(), role: "assistant", kind: "image_preview", imageUrl: url });
-    });
     
+    // 3. Only update memory and show image bubbles if NEW images were attached
+    if (stagedImages.length > 0) {
+      setLastUploadedImages(filesToProcess);
+      filesToProcess.forEach((file) => {
+        const url = URL.createObjectURL(file);
+        push({ id: nextId(), role: "assistant", kind: "image_preview", imageUrl: url });
+      });
+    }
+    
+    // 4. Show the text prompt bubble
     if (currentInstruction.trim()) {
       push({ id: nextId(), role: "user", kind: "text", text: currentInstruction });
     }
@@ -82,6 +91,7 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
     try {
       const compressedFiles = await Promise.all(
         files.map(async (file) => {
+          // Highly optimized compression for faster text extraction
           const options = { maxSizeMB: 0.2, maxWidthOrHeight: 1200, useWebWorker: true };
           return await imageCompression(file, options);
         })
@@ -245,6 +255,7 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
             type="file"
             accept="image/*"
             multiple
+            capture="environment"
             className="hidden"
             onChange={(e) => {
               const files = Array.from(e.target.files || []);
@@ -265,7 +276,7 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
 
           <button
             onClick={handleSubmit}
-            disabled={busy || stagedImages.length === 0}
+            disabled={busy || (stagedImages.length === 0 && !instruction.trim())}
             className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white rounded-full px-5 py-2.5 text-sm font-medium transition disabled:opacity-50 disabled:bg-ink-800"
           >
             Send
