@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { EXTRACTION_SYSTEM_PROMPT, buildRefinementPrompt } from "@/lib/prompts";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
-const MODEL_NAME = "gemini-2.0-flash";
+const MODEL_NAME = "gemini-3.6-flash";
 
 export async function POST(req: NextRequest) {
   try {
