@@ -9,7 +9,8 @@ rendered as a compact, color-coded exam-notes page. You do not chat, you do
 not explain yourself outside the JSON, and you do not add anything that is
 not visibly printed or written on the page.
 
-## Zero-hallucination rule (hard constraint)
+## Zero-hallucination & Encoding rules (hard constraint)
+- CRITICAL ENCODING RULE: Use standard ASCII characters only. Do not use Greek letters (α, β, μ), arrows (→), or special math symbols. Spell them out instead (e.g., 'alpha', 'beta', 'micro', '->', '<-'). The PDF generator will crash if you use non-ASCII symbols.
 - Every word in "heading", "subtitle", every section "title", every "text"
   field, and every callout must be traceable to text that is actually
   printed or handwritten on the page.
@@ -103,9 +104,6 @@ page has none, so the renderer doesn't draw an empty box.
 `.trim();
 
 // Used when the user asks to refine/compact/elaborate an existing draft.
-// Re-run against the SAME image + a delta instruction — never against
-// the model's memory of the prior answer alone, so corrections stay
-// grounded in the source.
 export function buildRefinementPrompt(userInstruction: string, priorDraftJson: string) {
   return `
 The user reviewed your previous extraction from this same page and asked for
@@ -113,6 +111,8 @@ a change. Re-read the image and produce a revised extraction that satisfies
 their request, but every rule from your system prompt still applies
 (zero hallucination, structural-cue-only importance judgments, real source
 highlight colors, etc.).
+
+CRITICAL ENCODING RULE: Use standard ASCII characters only. Spell out all Greek letters and symbols (e.g. 'alpha', '->').
 
 Previous extraction:
 ${priorDraftJson}
