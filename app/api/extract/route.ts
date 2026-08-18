@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { EXTRACTION_SYSTEM_PROMPT, buildRefinementPrompt } from "@/lib/prompts";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
+
+// gemini-2.0-flash is on Google's free tier (rate-limited, no billing
+// required) and supports vision + long system instructions. If this model
+// name is ever retired, check https://ai.google.dev/gemini-api/docs/models
+// for the current free-tier vision model and swap it in here.
+const MODEL_NAME = "gemini-2.0-flash";
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,33 +23,27 @@ export async function POST(req: NextRequest) {
 
     const arrayBuffer = await file.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
-    const mediaType = file.type || "image/jpeg";
+    const mimeType = file.type || "image/jpeg";
 
     const userText =
       refinementInstruction && priorDraft
         ? buildRefinementPrompt(refinementInstruction, priorDraft)
         : "Extract this page according to your instructions and return the JSON.";
 
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-5", // strong vision + JSON-following; swap for claude-opus-4-8 if you need higher accuracy on dense/cluttered pages
-      max_tokens: 1500,
-      system: EXTRACTION_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type: mediaType as any, data: base64 },
-            },
-            { type: "text", text: userText },
-          ],
-        },
-      ],
+    const model = genAI.getGenerativeModel({
+      model: MODEL_NAME,
+      systemInstruction: EXTRACTION_SYSTEM_PROMPT,
+      generationConfig: {
+        responseMimeType: "application/json", // asks Gemini to return raw JSON, no markdown fences
+      },
     });
 
-    const textBlock = response.content.find((b) => b.type === "text");
-    const raw = textBlock && "text" in textBlock ? textBlock.text : "{}";
+    const result = await model.generateContent([
+      { inlineData: { mimeType, data: base64 } },
+      { text: userText },
+    ]);
+
+    const raw = result.response.text();
 
     let parsed;
     try {
