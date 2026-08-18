@@ -60,8 +60,11 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
     setLastUploadedImages(filesToProcess);
 
     // Fixed: role set to "assistant" to satisfy the ChatMessage type definition
-    const url = URL.createObjectURL(filesToProcess[0]);
-    push({ id: nextId(), role: "assistant", kind: "image_preview", imageUrl: url });
+   // Show a preview bubble for EVERY image
+    filesToProcess.forEach((file) => {
+      const url = URL.createObjectURL(file);
+      push({ id: nextId(), role: "assistant", kind: "image_preview", imageUrl: url });
+    });
     
     if (currentInstruction.trim()) {
       push({ id: nextId(), role: "user", kind: "text", text: currentInstruction });
