@@ -1,45 +1,92 @@
-// Demo persistence layer. Swap the internals for Postgres/SQLite/S3 later —
-// keep this exact interface so routes and components don't need to change.
+import { put, list } from "@vercel/blob";
 
 export interface Notebook {
   id: string;
   name: string;
   pageCount: number;
-  pdfBytes: Uint8Array | null; // the concatenated PDF, grows over time
-  lastThumbnailText: string | null; // heading of most recently appended page
+  pdfUrl: string | null; // Changed from pdfBytes to pdfUrl
+  lastThumbnailText: string | null;
   updatedAt: string;
 }
 
-const notebooks = new Map<string, Notebook>();
-
-export function listNotebooks(): Notebook[] {
-  return Array.from(notebooks.values()).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+// Helper to fetch the permanent index of notebooks from the cloud
+async function getIndex(): Promise<Notebook[]> {
+  try {
+    const { blobs } = await list({ prefix: 'index.json' });
+    if (blobs.length === 0) return [];
+    
+    // fetch the json, ensuring Next.js doesn't cache an old version
+    const res = await fetch(blobs[0].url, { cache: 'no-store' });
+    return await res.json();
+  } catch (e) {
+    return [];
+  }
 }
 
-export function getNotebook(id: string): Notebook | undefined {
-  return notebooks.get(id);
+// Helper to save the index back to the cloud
+async function saveIndex(notebooks: Notebook[]) {
+  await put('index.json', JSON.stringify(notebooks), {
+    access: 'public',
+    addRandomSuffix: false, // Overwrites the existing file
+  });
 }
 
-export function createNotebook(name: string): Notebook {
+export async function listNotebooks(): Promise<Notebook[]> {
+  const notebooks = await getIndex();
+  return notebooks.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+}
+
+export async function getNotebook(id: string): Promise<Notebook | undefined> {
+  const notebooks = await getIndex();
+  return notebooks.find((n) => n.id === id);
+}
+
+export async function createNotebook(name: string): Promise<Notebook> {
+  const notebooks = await getIndex();
   const id = crypto.randomUUID();
   const nb: Notebook = {
     id,
     name,
     pageCount: 0,
-    pdfBytes: null,
+    pdfUrl: null,
     lastThumbnailText: null,
     updatedAt: new Date().toISOString(),
   };
-  notebooks.set(id, nb);
+  notebooks.push(nb);
+  await saveIndex(notebooks);
   return nb;
 }
 
-export function appendPage(id: string, newPdfBytes: Uint8Array, heading: string): Notebook {
-  const nb = notebooks.get(id);
-  if (!nb) throw new Error("Notebook not found");
-  nb.pdfBytes = newPdfBytes; // caller has already merged old + new
+export async function appendPage(id: string, newPdfBytes: Uint8Array, heading: string): Promise<Notebook> {
+  const notebooks = await getIndex();
+  const nbIndex = notebooks.findIndex((n) => n.id === id);
+  if (nbIndex === -1) throw new Error("Notebook not found");
+  
+  const nb = notebooks[nbIndex];
+  
+  // Upload the actual PDF file to Vercel Blob!
+  const filename = `notebooks/${id}.pdf`;
+  const blob = await put(filename, newPdfBytes, {
+    access: 'public',
+    addRandomSuffix: false, // Overwrites the old PDF with the newly merged one
+    contentType: 'application/pdf',
+  });
+
+  nb.pdfUrl = blob.url;
   nb.pageCount += 1;
   nb.lastThumbnailText = heading;
   nb.updatedAt = new Date().toISOString();
+  
+  notebooks[nbIndex] = nb;
+  await saveIndex(notebooks);
   return nb;
+}
+
+// Helper to download the old PDF bytes before merging a new page
+export async function getPdfBytes(url: string | null): Promise<Uint8Array | null> {
+  if (!url) return null;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) return null;
+  const arrayBuffer = await res.arrayBuffer();
+  return new Uint8Array(arrayBuffer);
 }
