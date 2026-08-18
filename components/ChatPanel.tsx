@@ -82,7 +82,7 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
     try {
       const compressedFiles = await Promise.all(
         files.map(async (file) => {
-          const options = { maxSizeMB: 1, maxWidthOrHeight: 1920, useWebWorker: true };
+          const options = { maxSizeMB: 0.2, maxWidthOrHeight: 1200, useWebWorker: true };
           return await imageCompression(file, options);
         })
       );
