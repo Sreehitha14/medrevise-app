@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import MessageBubble, { ChatMessage } from "./MessageBubble";
 import { ExtractedDraft } from "@/lib/pdfEngine";
+import imageCompression from "browser-image-compression";
 
 let idCounter = 0;
 const nextId = () => `m${++idCounter}`;
@@ -17,7 +18,7 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
         "Upload a photo of a textbook page and I'll pull out either the highlighted lines, or the high-yield points if nothing's marked. Nothing outside the page ever makes it into your notes.",
     },
   ]);
-  const [pendingImage, setPendingImage] = useState<File | null>(null);
+  const [pendingImages, setPendingImages] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -29,27 +30,58 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
     setMessages((prev) => prev.map((m) => (m.id === id ? ({ ...m, ...patch } as ChatMessage) : m)));
   }
 
-  async function handleFileSelected(file: File) {
-    setPendingImage(file);
-    const url = URL.createObjectURL(file);
+  async function handleFilesSelected(files: File[]) {
+    setPendingImages(files);
+    // Preview the first image in the chat
+    const url = URL.createObjectURL(files[0]);
     push({ id: nextId(), role: "assistant", kind: "image_preview", imageUrl: url });
-    await runExtraction(file);
+    await runExtraction(files);
   }
 
   async function runExtraction(
-    file: File,
+    files: File[],
     refinementInstruction?: string,
     priorDraft?: ExtractedDraft
   ) {
     setBusy(true);
     try {
-      const form = new FormData();
-      form.append("image", file);
+      // 1. Compress all files to prevent Vercel 413 Payload error
+      const compressedFiles = await Promise.all(
+        files.map(async (file) => {
+          const options = {
+            maxSizeMB: 1, // Compress to max 1MB each
+            maxWidthOrHeight: 1920,
+            useWebWorker: true,
+          };
+          return await imageCompression(file, options);
+        })
+      );
+
+      // 2. Convert all compressed files to Base64 strings
+      const base64Images = await Promise.all(
+        compressedFiles.map((file) => {
+          return new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = (error) => reject(error);
+          });
+        })
+      );
+
+      // 3. Send as JSON array instead of FormData
+      const payload: any = { images: base64Images };
       if (refinementInstruction && priorDraft) {
-        form.append("refinementInstruction", refinementInstruction);
-        form.append("priorDraft", JSON.stringify(priorDraft));
+        payload.refinementInstruction = refinementInstruction;
+        payload.priorDraft = priorDraft;
       }
-      const res = await fetch("/api/extract", { method: "POST", body: form });
+
+      const res = await fetch("/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      
       const data = await res.json();
 
       if (data.mode === "unclear") {
@@ -76,11 +108,10 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
       id: routingId,
       role: "assistant",
       kind: "routing",
-      notebooks: data.notebooks.map((n: any) => ({ id: n.id, name: n.name })),
+      notebooks: data.notebooks?.map((n: any) => ({ id: n.id, name: n.name })),
       resolved: false,
     });
 
-    // Stash the approved draft on the routing message via closure below.
     pendingDraftRef.current = draft;
     pendingRoutingMsgId.current = routingId;
   }
@@ -125,16 +156,17 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
   }
 
   async function handleRefinement(messageId: string, instruction: string, priorDraft: ExtractedDraft) {
-    if (!pendingImage) return;
+    if (!pendingImages.length) return;
     updateMessage(messageId, { resolved: true } as any);
     push({ id: nextId(), role: "user", kind: "text", text: instruction });
-    await runExtraction(pendingImage, instruction, priorDraft);
+    await runExtraction(pendingImages, instruction, priorDraft);
   }
 
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-3">
-        {messages.map((m) => (
+        {/* Optional chaining (?) added below to prevent the client crash */}
+        {messages?.map((m) => (
           <MessageBubble
             key={m.id}
             message={m}
@@ -159,7 +191,7 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={busy}
-            title="Upload a textbook page photo"
+            title="Upload textbook page photo(s)"
             className="w-9 h-9 shrink-0 rounded-full bg-ink-800 hover:bg-ink-700 flex items-center justify-center text-ink-300 disabled:opacity-40 transition"
           >
             <PaperclipIcon />
@@ -168,16 +200,17 @@ export default function ChatPanel({ onPageGenerated }: { onPageGenerated: () => 
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            multiple // This allows selecting multiple photos
             capture="environment"
             className="hidden"
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleFileSelected(f);
+              const files = Array.from(e.target.files || []);
+              if (files.length > 0) handleFilesSelected(files);
               e.target.value = "";
             }}
           />
           <div className="flex-1 text-xs text-ink-500 px-3 py-2 rounded-full bg-ink-800/60 border border-ink-800">
-            Attach a page photo to get started
+            Attach page photo(s) to get started
           </div>
         </div>
       </div>
